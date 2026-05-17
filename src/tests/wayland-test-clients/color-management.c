@@ -252,6 +252,82 @@ create_image_description_from_icc (WaylandDisplay                  *display,
   g_assert_cmpint (image_description_context.image_description_id, >, 0);
 }
 
+static void
+create_image_description_with_mastering (WaylandDisplay                  *display,
+                                         struct wp_image_description_v1 **image_description)
+{
+  struct wp_image_description_creator_params_v1 *creator_params;
+  ImageDescriptionContext image_description_context;
+
+  creator_params =
+    wp_color_manager_v1_create_parametric_creator (display->color_management_mgr);
+
+  wp_image_description_creator_params_v1_set_primaries_named (
+    creator_params,
+    WP_COLOR_MANAGER_V1_PRIMARIES_BT2020);
+  wp_image_description_creator_params_v1_set_tf_named (
+    creator_params,
+    WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ);
+  wp_image_description_creator_params_v1_set_luminances (
+    creator_params,
+    float_to_scaled_uint32 (0.005f),
+    10000,
+    203);
+  wp_image_description_creator_params_v1_set_mastering_display_primaries (
+    creator_params,
+    float_to_scaled_uint32_chromaticity (custom_primaries.r_x),
+    float_to_scaled_uint32_chromaticity (custom_primaries.r_y),
+    float_to_scaled_uint32_chromaticity (custom_primaries.g_x),
+    float_to_scaled_uint32_chromaticity (custom_primaries.g_y),
+    float_to_scaled_uint32_chromaticity (custom_primaries.b_x),
+    float_to_scaled_uint32_chromaticity (custom_primaries.b_y),
+    float_to_scaled_uint32_chromaticity (custom_primaries.w_x),
+    float_to_scaled_uint32_chromaticity (custom_primaries.w_y));
+  wp_image_description_creator_params_v1_set_mastering_luminance (
+    creator_params,
+    float_to_scaled_uint32 (0.005f),
+    1000);
+  wp_image_description_creator_params_v1_set_max_cll (creator_params, 1000);
+  wp_image_description_creator_params_v1_set_max_fall (creator_params, 400);
+
+  image_description_context.image_description_id = 0;
+  image_description_context.creation_failed = FALSE;
+
+  *image_description =
+    wp_image_description_creator_params_v1_create (creator_params);
+  wp_image_description_v1_add_listener (
+    *image_description,
+    &image_description_listener,
+    &image_description_context);
+
+  wait_for_image_description_ready (&image_description_context, display);
+
+  g_assert_false (image_description_context.creation_failed);
+  g_assert_cmpint (image_description_context.image_description_id, >, 0);
+}
+
+static void
+create_image_description_windows_scrgb (WaylandDisplay                  *display,
+                                        struct wp_image_description_v1 **image_description)
+{
+  ImageDescriptionContext image_description_context;
+
+  image_description_context.image_description_id = 0;
+  image_description_context.creation_failed = FALSE;
+
+  *image_description =
+    wp_color_manager_v1_create_windows_scrgb (display->color_management_mgr);
+  wp_image_description_v1_add_listener (
+    *image_description,
+    &image_description_listener,
+    &image_description_context);
+
+  wait_for_image_description_ready (&image_description_context, display);
+
+  g_assert_false (image_description_context.creation_failed);
+  g_assert_cmpint (image_description_context.image_description_id, >, 0);
+}
+
 int
 main (int    argc,
       char **argv)
@@ -362,6 +438,32 @@ main (int    argc,
 
   test_driver_sync_point (display->test_driver, 4, NULL);
   wait_for_sync_event (display, 4);
+
+  create_image_description_with_mastering (display, &image_description);
+  wp_color_management_surface_v1_set_image_description (
+    color_surface,
+    image_description,
+    WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
+
+  wl_surface_commit (surface);
+
+  wp_image_description_v1_destroy (image_description);
+
+  test_driver_sync_point (display->test_driver, 5, NULL);
+  wait_for_sync_event (display, 5);
+
+  create_image_description_windows_scrgb (display, &image_description);
+  wp_color_management_surface_v1_set_image_description (
+    color_surface,
+    image_description,
+    WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL);
+
+  wl_surface_commit (surface);
+
+  wp_image_description_v1_destroy (image_description);
+
+  test_driver_sync_point (display->test_driver, 6, NULL);
+  wait_for_sync_event (display, 6);
 
   wp_color_management_surface_v1_destroy (color_surface);
 

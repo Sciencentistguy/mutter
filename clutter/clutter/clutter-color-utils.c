@@ -301,6 +301,40 @@ clutter_luminance_equal (const ClutterLuminance *lum,
          luminance_value_approx_equal (lum->ref, other_lum->ref, 0.1f);
 }
 
+gboolean
+clutter_mastering_metadata_equal (const ClutterColorMasteringMetadata *mastering,
+                                  const ClutterColorMasteringMetadata *other_mastering)
+{
+  if (mastering->has_primaries != other_mastering->has_primaries ||
+      mastering->has_luminance != other_mastering->has_luminance ||
+      mastering->has_max_cll != other_mastering->has_max_cll ||
+      mastering->has_max_fall != other_mastering->has_max_fall)
+    return FALSE;
+
+  if (mastering->has_primaries &&
+      !clutter_primaries_equal (&mastering->primaries, &other_mastering->primaries))
+    return FALSE;
+
+  if (mastering->has_luminance &&
+      (!luminance_value_approx_equal (mastering->min_lum,
+                                      other_mastering->min_lum, 0.1f) ||
+       !luminance_value_approx_equal (mastering->max_lum,
+                                      other_mastering->max_lum, 0.1f)))
+    return FALSE;
+
+  if (mastering->has_max_cll &&
+      !luminance_value_approx_equal (mastering->max_cll,
+                                     other_mastering->max_cll, 0.1f))
+    return FALSE;
+
+  if (mastering->has_max_fall &&
+      !luminance_value_approx_equal (mastering->max_fall,
+                                     other_mastering->max_fall, 0.1f))
+    return FALSE;
+
+  return TRUE;
+}
+
 const ClutterPrimaries *
 clutter_colorimetry_get_primaries (const ClutterColorimetry *colorimetry)
 {

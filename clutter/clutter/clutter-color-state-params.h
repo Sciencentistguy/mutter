@@ -57,6 +57,13 @@ ClutterColorState * clutter_color_state_params_new_from_primitives (ClutterConte
                                                                     ClutterLuminance    luminance);
 
 CLUTTER_EXPORT
+ClutterColorState * clutter_color_state_params_new_with_mastering (ClutterContext                      *context,
+                                                                   ClutterColorimetry                   colorimetry,
+                                                                   ClutterEOTF                          eotf,
+                                                                   ClutterLuminance                     luminance,
+                                                                   const ClutterColorMasteringMetadata *mastering);
+
+CLUTTER_EXPORT
 ClutterColorState * clutter_color_state_params_new_from_cicp (ClutterContext     *context,
                                                               const ClutterCicp  *cicp,
                                                               GError            **error);
@@ -69,5 +76,8 @@ const ClutterEOTF * clutter_color_state_params_get_eotf (ClutterColorStateParams
 
 CLUTTER_EXPORT
 const ClutterLuminance * clutter_color_state_params_get_luminance (ClutterColorStateParams *color_state_params);
+
+CLUTTER_EXPORT
+const ClutterColorMasteringMetadata * clutter_color_state_params_get_mastering_metadata (ClutterColorStateParams *color_state_params);
 
 G_END_DECLS

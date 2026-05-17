@@ -112,6 +112,25 @@ typedef struct _ClutterLuminance
   float mastering_max;
 } ClutterLuminance;
 
+/*
+ * Optional mastering display metadata, describing the color volume the
+ * content was actually authored for. Unlike the container colorimetry and
+ * luminance, these values are hints and may exceed the container volume
+ * (extended target volume).
+ */
+typedef struct _ClutterColorMasteringMetadata
+{
+  gboolean has_primaries;
+  ClutterPrimaries primaries;
+  gboolean has_luminance;
+  float min_lum;
+  float max_lum;
+  gboolean has_max_cll;
+  float max_cll;
+  gboolean has_max_fall;
+  float max_fall;
+} ClutterColorMasteringMetadata;
+
 typedef enum _ClutterCicpPrimaries
 {
   CLUTTER_CICP_PRIMARIES_SRGB = 1,
@@ -188,6 +207,10 @@ gboolean clutter_eotf_equal (const ClutterEOTF *eotf,
 CLUTTER_EXPORT
 gboolean clutter_luminance_equal (const ClutterLuminance *lum,
                                   const ClutterLuminance *other_lum);
+
+CLUTTER_EXPORT
+gboolean clutter_mastering_metadata_equal (const ClutterColorMasteringMetadata *mastering,
+                                           const ClutterColorMasteringMetadata *other_mastering);
 
 CLUTTER_EXPORT
 void clutter_xyY_to_XYZ (float            x,

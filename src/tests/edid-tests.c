@@ -78,4 +78,13 @@ main (int    argc,
   g_assert_true (edid_info->hdr_static_metadata.pq);
   g_assert_true (edid_info->colorimetry.bt2020_rgb);
   g_assert_true (edid_info->colorimetry.bt2020_ycc);
+
+  /* The default color primaries feed the HDR mastering display metadata
+   * reported to clients via the color-management protocol. */
+  g_assert_true (edid_info->default_color_primaries.has_primaries);
+  g_assert_true (edid_info->default_color_primaries.has_default_white_point);
+  g_assert_cmpfloat (edid_info->default_color_primaries.primary[0].x, >, 0.0f);
+  g_assert_cmpfloat (edid_info->default_color_primaries.primary[0].y, >, 0.0f);
+  g_assert_cmpfloat (edid_info->hdr_static_metadata.desired_content_min_luminance,
+                     >=, 0.0f);
 }

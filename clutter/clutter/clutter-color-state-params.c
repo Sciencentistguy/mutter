@@ -53,6 +53,7 @@ typedef struct _ClutterColorStateParams
   ClutterColorimetry colorimetry;
   ClutterEOTF eotf;
   ClutterLuminance luminance;
+  ClutterColorMasteringMetadata mastering;
 } ClutterColorStateParams;
 
 G_DEFINE_TYPE (ClutterColorStateParams,
@@ -91,6 +92,15 @@ clutter_color_state_params_get_luminance (ClutterColorStateParams *color_state_p
     case CLUTTER_LUMINANCE_TYPE_EXPLICIT:
       return &color_state_params->luminance;
     }
+}
+
+const ClutterColorMasteringMetadata *
+clutter_color_state_params_get_mastering_metadata (ClutterColorStateParams *color_state_params)
+{
+  g_return_val_if_fail (CLUTTER_IS_COLOR_STATE_PARAMS (color_state_params),
+                        NULL);
+
+  return &color_state_params->mastering;
 }
 
 static void
@@ -132,7 +142,11 @@ clutter_color_state_params_equals (ClutterColorState *color_state,
   target_lum =
     clutter_color_state_params_get_luminance (other_color_state_params);
 
-  return clutter_luminance_equal (lum, target_lum);
+  if (!clutter_luminance_equal (lum, target_lum))
+    return FALSE;
+
+  return clutter_mastering_metadata_equal (&color_state_params->mastering,
+                                           &other_color_state_params->mastering);
 }
 
 static char *
@@ -141,7 +155,9 @@ clutter_color_state_params_to_string (ClutterColorState *color_state)
   ClutterColorStateParams *color_state_params =
     CLUTTER_COLOR_STATE_PARAMS (color_state);
   g_autofree char *primaries_name = NULL;
+  g_autofree char *mastering_str = NULL;
   const char *transfer_function_name;
+  const ClutterColorMasteringMetadata *mastering;
   const ClutterLuminance *lum;
   uint64_t id;
 
@@ -149,20 +165,33 @@ clutter_color_state_params_to_string (ClutterColorState *color_state)
   primaries_name = clutter_colorimetry_to_string (color_state_params->colorimetry);
   transfer_function_name = clutter_eotf_to_string (color_state_params->eotf);
   lum = clutter_color_state_params_get_luminance (color_state_params);
+  mastering = &color_state_params->mastering;
+
+  if (mastering->has_primaries || mastering->has_luminance ||
+      mastering->has_max_cll || mastering->has_max_fall)
+    {
+      mastering_str =
+        g_strdup_printf (", mastering: (primaries: %s, min lum: %f, "
+                         "max lum: %f, max CLL: %f, max FALL: %f)",
+                         mastering->has_primaries ? "set" : "unset",
+                         mastering->min_lum,
+                         mastering->max_lum,
+                         mastering->max_cll,
+                         mastering->max_fall);
+    }
 
   return g_strdup_printf ("ClutterColorState %" G_GUINT64_FORMAT " "
                           "(primaries: %s, transfer function: %s, "
                           "min lum: %f, max lum: %f, ref lum: %f, "
-                          "mastering max lum: %f)",
+                          "mastering max lum: %f%s)",
                           id,
                           primaries_name,
                           transfer_function_name,
                           lum->min,
                           lum->max,
                           lum->ref,
-                          lum->mastering_max);
-
-
+                          lum->mastering_max,
+                          mastering_str ? mastering_str : "");
 }
 
 static ClutterEncodingRequiredFormat
@@ -436,6 +465,43 @@ clutter_color_state_params_new_from_primitives (ClutterContext     *context,
                                               luminance.max,
                                               luminance.ref,
                                               luminance.mastering_max);
+}
+
+/**
+ * clutter_color_state_params_new_with_mastering:
+ *
+ * Like clutter_color_state_params_new_from_primitives(), but additionally
+ * attaches optional mastering display metadata describing the color volume
+ * the content was authored for.
+ *
+ * Return value: A new ClutterColorState object.
+ **/
+ClutterColorState *
+clutter_color_state_params_new_with_mastering (ClutterContext                      *context,
+                                               ClutterColorimetry                   colorimetry,
+                                               ClutterEOTF                          eotf,
+                                               ClutterLuminance                     luminance,
+                                               const ClutterColorMasteringMetadata *mastering)
+{
+  ClutterColorState *color_state;
+  ClutterColorStateParams *color_state_params;
+
+  if (mastering && mastering->has_luminance && mastering->max_lum > 0.0f &&
+      luminance.type == CLUTTER_LUMINANCE_TYPE_EXPLICIT)
+    luminance.mastering_max = mastering->max_lum;
+
+  color_state = clutter_color_state_params_new_from_primitives (context,
+                                                                colorimetry,
+                                                                eotf,
+                                                                luminance);
+
+  if (mastering)
+    {
+      color_state_params = CLUTTER_COLOR_STATE_PARAMS (color_state);
+      color_state_params->mastering = *mastering;
+    }
+
+  return color_state;
 }
 
 static gboolean

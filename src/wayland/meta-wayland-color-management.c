@@ -133,6 +133,7 @@ typedef struct _MetaWaylandCreatorParams
   ClutterColorimetry colorimetry;
   ClutterEOTF eotf;
   ClutterLuminance lum;
+  ClutterColorMasteringMetadata mastering;
 
   gboolean is_colorimetry_set;
   gboolean is_eotf_set;
@@ -540,6 +541,12 @@ send_primaries (struct wl_resource     *resource,
     float_to_scaled_uint32_chromaticity (primaries->b_y),
     float_to_scaled_uint32_chromaticity (primaries->w_x),
     float_to_scaled_uint32_chromaticity (primaries->w_y));
+}
+
+static void
+send_target_primaries (struct wl_resource     *resource,
+                       const ClutterPrimaries *primaries)
+{
   wp_image_description_info_v1_send_target_primaries (
     resource,
     float_to_scaled_uint32_chromaticity (primaries->r_x),
@@ -560,7 +567,8 @@ send_information_from_params (struct wl_resource *info_resource,
   enum wp_color_manager_v1_transfer_function tf;
   ClutterColorStateParams *color_state_params;
   const ClutterColorimetry *colorimetry;
-  const ClutterPrimaries *primaries;
+  const ClutterPrimaries *container_primaries = NULL;
+  const ClutterColorMasteringMetadata *mastering;
   const ClutterEOTF *eotf;
   const ClutterLuminance *lum;
 
@@ -574,13 +582,15 @@ send_information_from_params (struct wl_resource *info_resource,
       wp_image_description_info_v1_send_primaries_named (info_resource,
                                                          primaries_named);
 
-      primaries = clutter_colorspace_to_primaries (colorimetry->colorspace);
-      send_primaries (info_resource, primaries);
+      container_primaries =
+        clutter_colorspace_to_primaries (colorimetry->colorspace);
       break;
     case CLUTTER_COLORIMETRY_TYPE_PRIMARIES:
-      send_primaries (info_resource, colorimetry->primaries);
+      container_primaries = colorimetry->primaries;
       break;
     }
+
+  send_primaries (info_resource, container_primaries);
 
   eotf = clutter_color_state_params_get_eotf (color_state_params);
   switch (eotf->type)
@@ -604,9 +614,34 @@ send_information_from_params (struct wl_resource *info_resource,
                                                 float_to_scaled_uint32 (lum->min),
                                                 (uint32_t) lum->max,
                                                 (uint32_t) lum->ref);
-  wp_image_description_info_v1_send_target_luminance (info_resource,
-                                                      float_to_scaled_uint32 (lum->min),
-                                                      (uint32_t) lum->max);
+
+  mastering = clutter_color_state_params_get_mastering_metadata (color_state_params);
+
+  /* The target color volume: the mastering display metadata when known,
+   * otherwise the container color volume itself. */
+  if (mastering->has_primaries)
+    send_target_primaries (info_resource, &mastering->primaries);
+  else
+    send_target_primaries (info_resource, container_primaries);
+
+  if (mastering->has_luminance && mastering->max_lum > 0.0f)
+    wp_image_description_info_v1_send_target_luminance (
+      info_resource,
+      float_to_scaled_uint32 (mastering->min_lum),
+      (uint32_t) mastering->max_lum);
+  else
+    wp_image_description_info_v1_send_target_luminance (
+      info_resource,
+      float_to_scaled_uint32 (lum->min),
+      (uint32_t) lum->max);
+
+  if (mastering->has_max_cll && mastering->max_cll > 0.0f)
+    wp_image_description_info_v1_send_target_max_cll (info_resource,
+                                                      (uint32_t) mastering->max_cll);
+
+  if (mastering->has_max_fall && mastering->max_fall > 0.0f)
+    wp_image_description_info_v1_send_target_max_fall (info_resource,
+                                                       (uint32_t) mastering->max_fall);
 }
 
 static void
@@ -1283,10 +1318,11 @@ creator_params_create (struct wl_client   *client,
                         id);
 
   color_state =
-    clutter_color_state_params_new_from_primitives (clutter_context,
-                                                    creator_params->colorimetry,
-                                                    creator_params->eotf,
-                                                    creator_params->lum);
+    clutter_color_state_params_new_with_mastering (clutter_context,
+                                                   creator_params->colorimetry,
+                                                   creator_params->eotf,
+                                                   creator_params->lum,
+                                                   &creator_params->mastering);
 
   image_desc = meta_wayland_image_description_new (color_manager,
                                                    image_desc_resource);
@@ -1491,14 +1527,8 @@ creator_params_set_luminance (struct wl_client   *client,
       return;
     }
 
-  if (ref > max)
-    {
-      wl_resource_post_error (resource,
-                              WP_IMAGE_DESCRIPTION_CREATOR_PARAMS_V1_ERROR_INVALID_LUMINANCE,
-                              "The reference luminance is bigger than the maximum luminance, "
-                              "extended target volume unsupported");
-      return;
-    }
+  /* A reference luminance above the maximum luminance is allowed: it
+   * indicates an extended target volume, which we advertise support for. */
 
   creator_params->lum.type = CLUTTER_LUMINANCE_TYPE_EXPLICIT;
   creator_params->lum.min = min;
@@ -1519,9 +1549,28 @@ creator_params_set_mastering_display_primaries (struct wl_client   *client,
                                                 int32_t             w_x,
                                                 int32_t             w_y)
 {
-  wl_resource_post_error (resource,
-                          WP_COLOR_MANAGER_V1_ERROR_UNSUPPORTED_FEATURE,
-                          "Setting mastering display primaries is not supported");
+  MetaWaylandCreatorParams *creator_params =
+    wl_resource_get_user_data (resource);
+  ClutterPrimaries *primaries = &creator_params->mastering.primaries;
+
+  if (creator_params->mastering.has_primaries)
+    {
+      wl_resource_post_error (resource,
+                              WP_IMAGE_DESCRIPTION_CREATOR_PARAMS_V1_ERROR_ALREADY_SET,
+                              "The mastering display primaries were already set");
+      return;
+    }
+
+  primaries->r_x = scaled_uint32_to_float_chromaticity (r_x);
+  primaries->r_y = scaled_uint32_to_float_chromaticity (r_y);
+  primaries->g_x = scaled_uint32_to_float_chromaticity (g_x);
+  primaries->g_y = scaled_uint32_to_float_chromaticity (g_y);
+  primaries->b_x = scaled_uint32_to_float_chromaticity (b_x);
+  primaries->b_y = scaled_uint32_to_float_chromaticity (b_y);
+  primaries->w_x = scaled_uint32_to_float_chromaticity (w_x);
+  primaries->w_y = scaled_uint32_to_float_chromaticity (w_y);
+
+  creator_params->mastering.has_primaries = TRUE;
 }
 
 static void
@@ -1530,9 +1579,33 @@ creator_params_set_mastering_luminance (struct wl_client   *client,
                                         uint32_t            min_lum,
                                         uint32_t            max_lum)
 {
-  wl_resource_post_error (resource,
-                          WP_COLOR_MANAGER_V1_ERROR_UNSUPPORTED_FEATURE,
-                          "Setting mastering display luminances is not supported");
+  MetaWaylandCreatorParams *creator_params =
+    wl_resource_get_user_data (resource);
+  float min, max;
+
+  if (creator_params->mastering.has_luminance)
+    {
+      wl_resource_post_error (resource,
+                              WP_IMAGE_DESCRIPTION_CREATOR_PARAMS_V1_ERROR_ALREADY_SET,
+                              "The mastering display luminances were already set");
+      return;
+    }
+
+  min = scaled_uint32_to_float (min_lum);
+  max = (float) max_lum;
+
+  if (max > 0.0f && max <= min)
+    {
+      wl_resource_post_error (resource,
+                              WP_IMAGE_DESCRIPTION_CREATOR_PARAMS_V1_ERROR_INVALID_LUMINANCE,
+                              "The mastering maximum luminance is smaller than "
+                              "the minimum luminance");
+      return;
+    }
+
+  creator_params->mastering.has_luminance = TRUE;
+  creator_params->mastering.min_lum = min;
+  creator_params->mastering.max_lum = max;
 }
 
 static void
@@ -1540,8 +1613,19 @@ creator_params_set_max_cll (struct wl_client   *client,
                             struct wl_resource *resource,
                             uint32_t            max_cll)
 {
-  /* ignoring for now */
-  /* FIXME: technically we must send errors in some cases */
+  MetaWaylandCreatorParams *creator_params =
+    wl_resource_get_user_data (resource);
+
+  if (creator_params->mastering.has_max_cll)
+    {
+      wl_resource_post_error (resource,
+                              WP_IMAGE_DESCRIPTION_CREATOR_PARAMS_V1_ERROR_ALREADY_SET,
+                              "The maximum content light level was already set");
+      return;
+    }
+
+  creator_params->mastering.has_max_cll = TRUE;
+  creator_params->mastering.max_cll = (float) max_cll;
 }
 
 static void
@@ -1549,8 +1633,19 @@ creator_params_set_max_fall (struct wl_client   *client,
                              struct wl_resource *resource,
                              uint32_t            max_fall)
 {
-  /* ignoring for now */
-  /* FIXME: technically we must send errors in some cases */
+  MetaWaylandCreatorParams *creator_params =
+    wl_resource_get_user_data (resource);
+
+  if (creator_params->mastering.has_max_fall)
+    {
+      wl_resource_post_error (resource,
+                              WP_IMAGE_DESCRIPTION_CREATOR_PARAMS_V1_ERROR_ALREADY_SET,
+                              "The maximum frame-average light level was already set");
+      return;
+    }
+
+  creator_params->mastering.has_max_fall = TRUE;
+  creator_params->mastering.max_fall = (float) max_fall;
 }
 
 static const struct wp_image_description_creator_params_v1_interface
@@ -1813,9 +1908,62 @@ color_manager_create_windows_scrgb (struct wl_client   *client,
                                     struct wl_resource *resource,
                                     uint32_t            id)
 {
-  wl_resource_post_error (resource,
-                          WP_COLOR_MANAGER_V1_ERROR_UNSUPPORTED_FEATURE,
-                          "Windows scRGB is not supported");
+  MetaWaylandColorManager *color_manager = wl_resource_get_user_data (resource);
+  ClutterContext *clutter_context = get_clutter_context (color_manager);
+  struct wl_resource *image_desc_resource;
+  g_autoptr (ClutterColorState) color_state = NULL;
+  MetaWaylandImageDescription *image_desc;
+  ClutterColorimetry colorimetry;
+  ClutterEOTF eotf;
+  ClutterLuminance luminance;
+  ClutterColorMasteringMetadata mastering;
+
+  /* Windows-scRGB: sRGB (BT.709) primaries with an extended linear transfer
+   * characteristic. R=G=B=1.0 maps to 80 cd/m². The mastering color volume
+   * may extend up to BT.2100. */
+  colorimetry = (ClutterColorimetry) {
+    .type = CLUTTER_COLORIMETRY_TYPE_COLORSPACE,
+    .colorspace = CLUTTER_COLORSPACE_SRGB,
+  };
+  eotf = (ClutterEOTF) {
+    .type = CLUTTER_EOTF_TYPE_NAMED,
+    .tf_name = CLUTTER_TRANSFER_FUNCTION_LINEAR,
+  };
+  luminance = (ClutterLuminance) {
+    .type = CLUTTER_LUMINANCE_TYPE_EXPLICIT,
+    .min = 0.0f,
+    .max = 80.0f,
+    .ref = 203.0f,
+    .mastering_max = 80.0f,
+  };
+  mastering = (ClutterColorMasteringMetadata) {
+    .has_primaries = TRUE,
+    .primaries = *clutter_colorspace_to_primaries (CLUTTER_COLORSPACE_BT2020),
+  };
+
+  color_state =
+    clutter_color_state_params_new_with_mastering (clutter_context,
+                                                   colorimetry,
+                                                   eotf,
+                                                   luminance,
+                                                   &mastering);
+
+  image_desc_resource =
+    wl_resource_create (client,
+                        &wp_image_description_v1_interface,
+                        wl_resource_get_version (resource),
+                        id);
+
+  image_desc = meta_wayland_image_description_new (color_manager,
+                                                   image_desc_resource);
+  meta_wayland_image_description_set_ready (image_desc,
+                                            color_state,
+                                            META_WAYLAND_IMAGE_DESCRIPTION_FLAGS_DEFAULT);
+
+  wl_resource_set_implementation (image_desc_resource,
+                                  &meta_wayland_image_description_interface,
+                                  image_desc,
+                                  image_description_destructor);
 }
 
 static void
@@ -1844,6 +1992,12 @@ color_manager_send_supported_events (struct wl_resource *resource)
                                               WP_COLOR_MANAGER_V1_FEATURE_SET_TF_POWER);
   wp_color_manager_v1_send_supported_feature (resource,
                                               WP_COLOR_MANAGER_V1_FEATURE_SET_LUMINANCES);
+  wp_color_manager_v1_send_supported_feature (resource,
+                                              WP_COLOR_MANAGER_V1_FEATURE_SET_MASTERING_DISPLAY_PRIMARIES);
+  wp_color_manager_v1_send_supported_feature (resource,
+                                              WP_COLOR_MANAGER_V1_FEATURE_EXTENDED_TARGET_VOLUME);
+  wp_color_manager_v1_send_supported_feature (resource,
+                                              WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB);
   wp_color_manager_v1_send_supported_tf_named (resource,
                                                WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA22);
   wp_color_manager_v1_send_supported_tf_named (resource,

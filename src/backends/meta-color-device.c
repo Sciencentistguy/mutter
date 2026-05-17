@@ -685,15 +685,77 @@ on_manager_ready (MetaColorManager *color_manager,
   create_cd_device (color_device);
 }
 
+/* Reference white luminance used for PQ HDR content, matching the PQ
+ * default luminance in clutter-color-state-params.c. */
+#define HDR_REFERENCE_LUMINANCE 203.0f
+
 static void
-get_color_metadata_from_monitor (MetaMonitor        *monitor,
-                                 ClutterColorimetry *colorimetry,
-                                 ClutterEOTF        *eotf)
+fill_hdr_metadata_from_edid (const MetaEdidInfo            *edid_info,
+                             ClutterLuminance              *luminance,
+                             ClutterColorMasteringMetadata *mastering)
+{
+  const struct di_hdr_static_metadata *hdr = &edid_info->hdr_static_metadata;
+  const struct di_color_primaries *primaries =
+    &edid_info->default_color_primaries;
+  float max_lum = (float) hdr->desired_content_max_luminance;
+  float min_lum = (float) hdr->desired_content_min_luminance;
+  float max_fall = (float) hdr->desired_content_max_frame_avg_luminance;
+
+  if (max_lum > 0.0f)
+    {
+      /* For PQ the encoded signal range is fixed; the display's actual
+       * capability is carried as the mastering luminance. */
+      luminance->type = CLUTTER_LUMINANCE_TYPE_EXPLICIT;
+      luminance->min = min_lum;
+      luminance->max = max_lum;
+      luminance->ref = HDR_REFERENCE_LUMINANCE;
+      luminance->mastering_max = max_lum;
+
+      mastering->has_luminance = TRUE;
+      mastering->min_lum = min_lum;
+      mastering->max_lum = max_lum;
+
+      /* Report the display's peak luminance as the target max content light
+       * level too. Clients (e.g. Wine's Wayland driver) read target_max_cll
+       * to derive the peak brightness they advertise to applications. */
+      mastering->has_max_cll = TRUE;
+      mastering->max_cll = max_lum;
+    }
+
+  if (primaries->has_primaries)
+    {
+      mastering->has_primaries = TRUE;
+      mastering->primaries.r_x = primaries->primary[0].x;
+      mastering->primaries.r_y = primaries->primary[0].y;
+      mastering->primaries.g_x = primaries->primary[1].x;
+      mastering->primaries.g_y = primaries->primary[1].y;
+      mastering->primaries.b_x = primaries->primary[2].x;
+      mastering->primaries.b_y = primaries->primary[2].y;
+      mastering->primaries.w_x = primaries->default_white.x;
+      mastering->primaries.w_y = primaries->default_white.y;
+    }
+
+  if (max_fall > 0.0f)
+    {
+      mastering->has_max_fall = TRUE;
+      mastering->max_fall = max_fall;
+    }
+}
+
+static void
+get_color_metadata_from_monitor (MetaMonitor                   *monitor,
+                                 ClutterColorimetry            *colorimetry,
+                                 ClutterEOTF                   *eotf,
+                                 ClutterLuminance              *luminance,
+                                 ClutterColorMasteringMetadata *mastering)
 {
   MetaOutput *output;
   const MetaOutputInfo *output_info;
   MetaEdidInfo *edid_info;
   const struct di_color_primaries *primaries;
+
+  *luminance = (ClutterLuminance) { .type = CLUTTER_LUMINANCE_TYPE_DERIVED };
+  *mastering = (ClutterColorMasteringMetadata) { 0 };
 
   switch (meta_monitor_get_color_mode (monitor))
     {
@@ -708,6 +770,12 @@ get_color_metadata_from_monitor (MetaMonitor        *monitor,
       colorimetry->colorspace = CLUTTER_COLORSPACE_BT2020;
       eotf->type = CLUTTER_EOTF_TYPE_NAMED;
       eotf->tf_name = CLUTTER_TRANSFER_FUNCTION_PQ;
+
+      output = meta_monitor_get_main_output (monitor);
+      output_info = meta_output_get_info (output);
+      edid_info = output_info->edid_info;
+      if (edid_info)
+        fill_hdr_metadata_from_edid (edid_info, luminance, mastering);
       return;
     case META_COLOR_MODE_SDR_NATIVE:
       output = meta_monitor_get_main_output (monitor);
@@ -755,9 +823,11 @@ update_color_state (MetaColorDevice *color_device)
   g_auto (ClutterColorimetry) colorimetry = { 0 };
   ClutterEOTF eotf;
   ClutterLuminance luminance;
+  ClutterColorMasteringMetadata mastering;
   UpdateResult result = 0;
 
-  get_color_metadata_from_monitor (monitor, &colorimetry, &eotf);
+  get_color_metadata_from_monitor (monitor, &colorimetry, &eotf,
+                                   &luminance, &mastering);
 
   if (meta_debug_control_is_hdr_forced (debug_control))
     {
@@ -765,15 +835,19 @@ update_color_state (MetaColorDevice *color_device)
       colorimetry.colorspace = CLUTTER_COLORSPACE_BT2020;
       eotf.type = CLUTTER_EOTF_TYPE_NAMED;
       eotf.tf_name = CLUTTER_TRANSFER_FUNCTION_PQ;
+      luminance = (ClutterLuminance) { .type = CLUTTER_LUMINANCE_TYPE_DERIVED };
+      mastering = (ClutterColorMasteringMetadata) { 0 };
     }
 
-  luminance = *clutter_eotf_get_default_luminance (eotf);
+  if (luminance.type == CLUTTER_LUMINANCE_TYPE_DERIVED)
+    luminance = *clutter_eotf_get_default_luminance (eotf);
   luminance.ref = luminance.ref * color_device->reference_luminance_factor;
 
-  color_state = clutter_color_state_params_new_from_primitives (clutter_context,
-                                                                colorimetry,
-                                                                eotf,
-                                                                luminance);
+  color_state = clutter_color_state_params_new_with_mastering (clutter_context,
+                                                               colorimetry,
+                                                               eotf,
+                                                               luminance,
+                                                               &mastering);
 
   if (!color_device->color_state ||
       !clutter_color_state_equals (color_device->color_state, color_state))

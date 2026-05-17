@@ -78,6 +78,7 @@ color_management (void)
   const ClutterColorimetry *colorimetry;
   const ClutterEOTF *eotf;
   const ClutterLuminance *lum;
+  const ClutterColorMasteringMetadata *mastering;
   const MtkAnonymousFile *file;
 
   wayland_test_client = meta_wayland_test_client_new (test_context,
@@ -160,6 +161,51 @@ color_management (void)
   file = clutter_color_state_icc_get_file (color_state_icc);
   g_assert_nonnull (file);
   emit_sync_event (4);
+
+  wait_for_sync_point (5);
+  color_state = get_window_color_state (test_window);
+  color_state_params = CLUTTER_COLOR_STATE_PARAMS (color_state);
+  colorimetry = clutter_color_state_params_get_colorimetry (color_state_params);
+  g_assert_cmpuint (colorimetry->type, ==, CLUTTER_COLORIMETRY_TYPE_COLORSPACE);
+  g_assert_cmpuint (colorimetry->colorspace, ==, CLUTTER_COLORSPACE_BT2020);
+  mastering = clutter_color_state_params_get_mastering_metadata (color_state_params);
+  g_assert_true (mastering->has_primaries);
+  g_assert_cmpfloat_with_epsilon (mastering->primaries.r_x, 0.64f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat_with_epsilon (mastering->primaries.r_y, 0.33f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat_with_epsilon (mastering->primaries.g_x, 0.30f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat_with_epsilon (mastering->primaries.g_y, 0.60f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat_with_epsilon (mastering->primaries.b_x, 0.15f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat_with_epsilon (mastering->primaries.b_y, 0.06f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat_with_epsilon (mastering->primaries.w_x, 0.34567f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat_with_epsilon (mastering->primaries.w_y, 0.35850f, TEST_COLOR_EPSILON);
+  g_assert_true (mastering->has_luminance);
+  g_assert_cmpfloat_with_epsilon (mastering->min_lum, 0.005f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat (mastering->max_lum, ==, 1000.0f);
+  g_assert_true (mastering->has_max_cll);
+  g_assert_cmpfloat (mastering->max_cll, ==, 1000.0f);
+  g_assert_true (mastering->has_max_fall);
+  g_assert_cmpfloat (mastering->max_fall, ==, 400.0f);
+  lum = clutter_color_state_params_get_luminance (color_state_params);
+  g_assert_cmpfloat (lum->mastering_max, ==, 1000.0f);
+  emit_sync_event (5);
+
+  wait_for_sync_point (6);
+  color_state = get_window_color_state (test_window);
+  color_state_params = CLUTTER_COLOR_STATE_PARAMS (color_state);
+  colorimetry = clutter_color_state_params_get_colorimetry (color_state_params);
+  g_assert_cmpuint (colorimetry->type, ==, CLUTTER_COLORIMETRY_TYPE_COLORSPACE);
+  g_assert_cmpuint (colorimetry->colorspace, ==, CLUTTER_COLORSPACE_SRGB);
+  eotf = clutter_color_state_params_get_eotf (color_state_params);
+  g_assert_cmpuint (eotf->type, ==, CLUTTER_EOTF_TYPE_NAMED);
+  g_assert_cmpuint (eotf->tf_name, ==, CLUTTER_TRANSFER_FUNCTION_LINEAR);
+  lum = clutter_color_state_params_get_luminance (color_state_params);
+  g_assert_cmpuint (lum->type, ==, CLUTTER_LUMINANCE_TYPE_EXPLICIT);
+  g_assert_cmpfloat_with_epsilon (lum->min, 0.0f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat_with_epsilon (lum->max, 80.0f, TEST_COLOR_EPSILON);
+  g_assert_cmpfloat_with_epsilon (lum->ref, 203.0f, TEST_COLOR_EPSILON);
+  mastering = clutter_color_state_params_get_mastering_metadata (color_state_params);
+  g_assert_true (mastering->has_primaries);
+  emit_sync_event (6);
 
   meta_wayland_test_client_finish (wayland_test_client);
 }
