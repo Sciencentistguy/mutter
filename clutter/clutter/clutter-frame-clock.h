@@ -94,7 +94,8 @@ void clutter_frame_clock_notify_presented (ClutterFrameClock *frame_clock,
                                            ClutterFrameInfo  *frame_info);
 
 CLUTTER_EXPORT
-void clutter_frame_clock_notify_discarded (ClutterFrameClock *frame_clock);
+void clutter_frame_clock_notify_discarded (ClutterFrameClock *frame_clock,
+                                           int64_t            frame_count);
 
 CLUTTER_EXPORT
 void clutter_frame_clock_schedule_update (ClutterFrameClock *frame_clock);

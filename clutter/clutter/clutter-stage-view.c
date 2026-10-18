@@ -1109,7 +1109,8 @@ clutter_stage_view_notify_discarded (ClutterStageView *view,
     clutter_stage_view_get_instance_private (view);
 
   clutter_stage_notify_frame_discarded (priv->stage, view, frame_info);
-  clutter_frame_clock_notify_discarded (priv->frame_clock);
+  clutter_frame_clock_notify_discarded (priv->frame_clock,
+                                        cogl_frame_info_get_view_frame_counter (frame_info));
 }
 
 static void

@@ -765,13 +765,19 @@ frame_clock_destroy_signal (void)
   g_object_unref (frame_clock_backup);
 }
 
+typedef struct _NotifyDiscardedData
+{
+  ClutterFrameClock *frame_clock;
+  int64_t            frame_count;
+} NotifyDiscardedData;
+
 static gboolean
 notify_discarded_and_schedule_update_idle (gpointer user_data)
 {
-  ClutterFrameClock *frame_clock = user_data;
+  NotifyDiscardedData *data = user_data;
 
-  clutter_frame_clock_notify_discarded (frame_clock);
-  clutter_frame_clock_schedule_update (frame_clock);
+  clutter_frame_clock_notify_discarded (data->frame_clock, data->frame_count);
+  clutter_frame_clock_schedule_update (data->frame_clock);
 
   return G_SOURCE_REMOVE;
 }
@@ -782,6 +788,7 @@ frame_clock_discarded_frame (ClutterFrameClock *frame_clock,
                              gpointer           user_data)
 {
   GMainLoop *main_loop = user_data;
+  NotifyDiscardedData *data;
 
   g_assert_cmpint (clutter_frame_get_count (frame), ==, expected_frame_count);
 
@@ -795,7 +802,13 @@ frame_clock_discarded_frame (ClutterFrameClock *frame_clock,
 
   test_frame_count--;
 
-  g_idle_add (notify_discarded_and_schedule_update_idle, frame_clock);
+  data = g_new0 (NotifyDiscardedData, 1);
+  data->frame_clock = frame_clock;
+  data->frame_count = clutter_frame_get_count (frame);
+  g_idle_add_full (G_PRIORITY_DEFAULT_IDLE,
+                   notify_discarded_and_schedule_update_idle,
+                   data,
+                   g_free);
 
   return CLUTTER_FRAME_RESULT_PENDING_PRESENTED;
 }
