@@ -703,11 +703,17 @@ fill_hdr_metadata_from_edid (const MetaEdidInfo            *edid_info,
 
   if (max_lum > 0.0f)
     {
-      /* For PQ the encoded signal range is fixed; the display's actual
-       * capability is carried as the mastering luminance. */
+      /* For PQ the encoded signal range is fixed (0-10000 nits per spec); the
+       * display's actual capability is carried as the mastering luminance.
+       * Seed the container with the PQ defaults so the inverse-EOTF chain
+       * encodes values relative to 10000 cd/m² as the spec requires;
+       * override only the mastering peak with the EDID value. */
+      ClutterEOTF pq_eotf = {
+        .type = CLUTTER_EOTF_TYPE_NAMED,
+        .tf_name = CLUTTER_TRANSFER_FUNCTION_PQ,
+      };
+      *luminance = *clutter_eotf_get_default_luminance (pq_eotf);
       luminance->type = CLUTTER_LUMINANCE_TYPE_EXPLICIT;
-      luminance->min = min_lum;
-      luminance->max = max_lum;
       luminance->ref = HDR_REFERENCE_LUMINANCE;
       luminance->mastering_max = max_lum;
 
